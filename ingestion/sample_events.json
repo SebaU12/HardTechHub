@@ -1,0 +1,38 @@
+[
+  {
+    "event_id": "evt_1001",
+    "timestamp": "2026-09-04T10:00:00Z",
+    "user_id": "usr_demo_001",
+    "event_type": "PRODUCT_VIEW",
+    "product_id": 1,
+    "category": "CPU",
+    "session_id": "sess_1001"
+  },
+  {
+    "event_id": "evt_1002",
+    "timestamp": "2026-09-04T10:02:00Z",
+    "user_id": "usr_demo_001",
+    "event_type": "PRODUCT_VIEW",
+    "product_id": 1,
+    "category": "CPU",
+    "session_id": "sess_1001"
+  },
+  {
+    "event_id": "evt_1003",
+    "timestamp": "2026-09-04T10:05:00Z",
+    "user_id": "usr_demo_001",
+    "event_type": "PRODUCT_SEARCH",
+    "product_id": 1,
+    "category": "CPU",
+    "session_id": "sess_1001"
+  },
+  {
+    "event_id": "evt_1004",
+    "timestamp": "2026-09-04T10:08:00Z",
+    "user_id": "usr_catalog_001",
+    "event_type": "ORDER_CREATED",
+    "product_id": 1,
+    "category": "CPU",
+    "session_id": "sess_2001"
+  }
+]
