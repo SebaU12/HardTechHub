@@ -1,19 +1,22 @@
 import Fastify from "fastify";
+import cors from "@fastify/cors";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { Pool } from "pg";
 
 const pool = new Pool({
-  host: process.env.POSTGRES_HOST ?? "postgres",
-  port: parseInt(process.env.POSTGRES_PORT ?? "5432"),
-  database: process.env.POSTGRES_DB ?? "hardtech_catalog",
-  user: process.env.POSTGRES_USER ?? "hardtech",
-  password: process.env.POSTGRES_PASSWORD ?? "hardtech",
+  host: process.env.POSTGRES_HOST || process.env.DB_HOST || "postgres",
+  port: parseInt(process.env.POSTGRES_PORT || process.env.DB_PORT || "5432"),
+  database:
+    process.env.POSTGRES_DB || process.env.DB_NAME || "hardtech_catalog",
+  user: process.env.POSTGRES_USER || process.env.DB_USER || "hardtech",
+  password:
+    process.env.POSTGRES_PASSWORD || process.env.DB_PASSWORD || "hardtech",
 });
 
 const app = Fastify({ logger: true });
 
-// Health 
+// Health
 app.get(
   "/health",
   {
@@ -32,10 +35,14 @@ app.get(
       },
     },
   },
-  async () => ({ service: "catalog-service", status: "healthy", version: "1.0.0" })
+  async () => ({
+    service: "catalog-service",
+    status: "healthy",
+    version: "1.0.0",
+  }),
 );
 
-// Products 
+// Products
 const productSchema = {
   type: "object",
   properties: {
@@ -71,7 +78,7 @@ app.get(
       ORDER BY p.id ASC
     `);
     return reply.send(rows);
-  }
+  },
 );
 
 app.get<{ Params: { id: string } }>(
@@ -99,7 +106,8 @@ app.get<{ Params: { id: string } }>(
   },
   async (req, reply) => {
     const id = parseInt(req.params.id);
-    if (isNaN(id)) return reply.status(400).send({ detail: "Invalid product id" });
+    if (isNaN(id))
+      return reply.status(400).send({ detail: "Invalid product id" });
     const { rows } = await pool.query(
       `SELECT p.id, p.sku, p.name, p.description, p.price, p.specs, p.image_url,
               p.is_active, p.created_at, c.name AS category, b.name AS brand
@@ -107,11 +115,12 @@ app.get<{ Params: { id: string } }>(
        JOIN categories c ON c.id = p.category_id
        JOIN brands b ON b.id = p.brand_id
        WHERE p.id = $1`,
-      [id]
+      [id],
     );
-    if (rows.length === 0) return reply.status(404).send({ detail: "Product not found" });
+    if (rows.length === 0)
+      return reply.status(404).send({ detail: "Product not found" });
     return reply.send(rows[0]);
-  }
+  },
 );
 
 app.post(
@@ -148,16 +157,33 @@ app.post(
     },
   },
   async (req, reply) => {
-    const { category_id, brand_id, sku, name, description, price, specs, image_url } =
-      req.body as Record<string, unknown>;
+    const {
+      category_id,
+      brand_id,
+      sku,
+      name,
+      description,
+      price,
+      specs,
+      image_url,
+    } = req.body as Record<string, unknown>;
     const { rows } = await pool.query(
       `INSERT INTO products (category_id, brand_id, sku, name, description, price, specs, image_url)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id, sku, name, price`,
-      [category_id, brand_id, sku, name, description, price, JSON.stringify(specs), image_url]
+      [
+        category_id,
+        brand_id,
+        sku,
+        name,
+        description,
+        price,
+        JSON.stringify(specs),
+        image_url,
+      ],
     );
     return reply.status(201).send(rows[0]);
-  }
+  },
 );
 
 app.put<{ Params: { id: string } }>(
@@ -190,11 +216,20 @@ app.put<{ Params: { id: string } }>(
       req.body as Record<string, unknown>;
     const { rowCount } = await pool.query(
       `UPDATE products SET name=$1, description=$2, price=$3, specs=$4, image_url=$5, is_active=$6 WHERE id=$7`,
-      [name, description, price, JSON.stringify(specs), image_url, is_active, id]
+      [
+        name,
+        description,
+        price,
+        JSON.stringify(specs),
+        image_url,
+        is_active,
+        id,
+      ],
     );
-    if (rowCount === 0) return reply.status(404).send({ detail: "Product not found" });
+    if (rowCount === 0)
+      return reply.status(404).send({ detail: "Product not found" });
     return reply.send({ updated: true });
-  }
+  },
 );
 
 app.delete<{ Params: { id: string } }>(
@@ -213,15 +248,22 @@ app.delete<{ Params: { id: string } }>(
     const id = parseInt(req.params.id);
     await pool.query("UPDATE products SET is_active=FALSE WHERE id=$1", [id]);
     return reply.send({ deleted: true });
-  }
+  },
 );
 
 const start = async () => {
+  // CORS registrado para permitir peticiones del frontend en Amplify y local
+  await app.register(cors, {
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  });
+
   await app.register(swagger, {
     openapi: {
       info: {
         title: "Catalog Service",
-        description: "Gestión de productos, categorías y marcas de HardTech Hub",
+        description:
+          "Gestión de productos, categorías y marcas de HardTech Hub",
         version: "1.0.0",
       },
       tags: [
@@ -236,8 +278,9 @@ const start = async () => {
     uiConfig: { docExpansion: "list" },
   });
 
+  const PORT = parseInt(process.env.PORT || "8002");
   try {
-    await app.listen({ port: 8002, host: "0.0.0.0" });
+    await app.listen({ port: PORT, host: "0.0.0.0" });
   } catch (err) {
     app.log.error(err);
     process.exit(1);

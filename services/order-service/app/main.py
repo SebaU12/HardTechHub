@@ -6,6 +6,7 @@ from urllib.request import urlopen
 import json
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pymysql
 
@@ -22,10 +23,25 @@ def get_connection() -> pymysql.connections.Connection:
     )
 
 
-app = FastAPI(title="Order Service", version="1.0.0")
+app = FastAPI(
+    title="Order Service API - HardTechHub",
+    description="Microservicio de órdenes y pedidos conectado a MySQL",
+    version="1.0.0",
+    docs_url="/docs"
+)
+
+# 1. Habilitar CORS para peticiones desde AWS Amplify y desarrollo local
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def get_catalog_service_url() -> str:
+    # Puerto 8002 que usa catalog-service
     return os.getenv("CATALOG_SERVICE_URL", "http://catalog-service:8002")
 
 
@@ -36,7 +52,7 @@ def fetch_product_snapshot(product_id: int) -> dict[str, Any]:
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         if exc.code == 404:
-            raise HTTPException(status_code=400, detail=f"Product {product_id} not found") from exc
+            raise HTTPException(status_code=400, detail=f"Product {product_id} not found in catalog") from exc
         raise HTTPException(status_code=502, detail="Catalog Service error") from exc
     except URLError as exc:
         raise HTTPException(status_code=503, detail="Catalog Service unavailable") from exc
@@ -52,12 +68,39 @@ class CreateOrderRequest(BaseModel):
     items: list[OrderItemRequest]
 
 
-@app.get("/health")
+class UpdateStatusRequest(BaseModel):
+    status: str
+
+
+VALID_STATUSES = {"PENDING", "PAID", "SHIPPED", "CANCELLED"}
+
+
+@app.get("/health", tags=["Health"])
 def healthcheck() -> dict[str, str]:
     return {"service": "order-service", "status": "healthy", "version": "1.0.0"}
 
 
-@app.post("/api/orders")
+@app.get("/api/orders", tags=["Orders"])
+def get_all_orders() -> list[dict[str, Any]]:
+    """Listado general de órdenes para el Frontend"""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT * FROM orders ORDER BY created_at DESC LIMIT 50")
+            orders = cursor.fetchall()
+            for o in orders:
+                if "subtotal" in o: o["subtotal"] = str(o["subtotal"])
+                if "tax" in o: o["tax"] = str(o["tax"])
+                if "shipping_cost" in o: o["shipping_cost"] = str(o["shipping_cost"])
+                if "total_amount" in o: o["total_amount"] = str(o["total_amount"])
+                if "created_at" in o and o["created_at"]: o["created_at"] = str(o["created_at"])
+                if "updated_at" in o and o["updated_at"]: o["updated_at"] = str(o["updated_at"])
+        return orders
+    finally:
+        conn.close()
+
+
+@app.post("/api/orders", status_code=201, tags=["Orders"])
 def create_order(payload: CreateOrderRequest) -> dict[str, Any]:
     if not payload.items:
         raise HTTPException(status_code=400, detail="Order items are required")
@@ -117,14 +160,14 @@ def create_order(payload: CreateOrderRequest) -> dict[str, Any]:
         conn.commit()
     except Exception as exc:
         conn.rollback()
-        raise HTTPException(status_code=500, detail="MySQL error") from exc
+        raise HTTPException(status_code=500, detail=f"MySQL error: {str(exc)}") from exc
     finally:
         conn.close()
 
     return {"order_id": order_id, "status": "PENDING", "total_amount": str(total_amount)}
 
 
-@app.get("/api/orders/user/{user_id}")
+@app.get("/api/orders/user/{user_id}", tags=["Orders"])
 def get_orders_by_user(user_id: str) -> Any:
     conn = get_connection()
     try:
@@ -134,19 +177,47 @@ def get_orders_by_user(user_id: str) -> Any:
                 (user_id,),
             )
             orders = cursor.fetchall()
+            for o in orders:
+                if "subtotal" in o: o["subtotal"] = str(o["subtotal"])
+                if "tax" in o: o["tax"] = str(o["tax"])
+                if "shipping_cost" in o: o["shipping_cost"] = str(o["shipping_cost"])
+                if "total_amount" in o: o["total_amount"] = str(o["total_amount"])
+                if "created_at" in o and o["created_at"]: o["created_at"] = str(o["created_at"])
+                if "updated_at" in o and o["updated_at"]: o["updated_at"] = str(o["updated_at"])
     finally:
         conn.close()
     return list(orders)
 
 
-VALID_STATUSES = {"PENDING", "PAID", "SHIPPED", "CANCELLED"}
+@app.get("/api/orders/{order_id}", tags=["Orders"])
+def get_order(order_id: int) -> dict[str, Any]:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT * FROM orders WHERE id = %s", (order_id,))
+            order = cursor.fetchone()
+            if not order:
+                raise HTTPException(status_code=404, detail="Order not found")
+
+            if "subtotal" in order: order["subtotal"] = str(order["subtotal"])
+            if "tax" in order: order["tax"] = str(order["tax"])
+            if "shipping_cost" in order: order["shipping_cost"] = str(order["shipping_cost"])
+            if "total_amount" in order: order["total_amount"] = str(order["total_amount"])
+            if "created_at" in order and order["created_at"]: order["created_at"] = str(order["created_at"])
+            if "updated_at" in order and order["updated_at"]: order["updated_at"] = str(order["updated_at"])
+
+            cursor.execute("SELECT * FROM order_items WHERE order_id = %s ORDER BY id ASC", (order_id,))
+            items = cursor.fetchall()
+            for item in items:
+                if "unit_price" in item: item["unit_price"] = str(item["unit_price"])
+                if "subtotal" in item: item["subtotal"] = str(item["subtotal"])
+    finally:
+        conn.close()
+
+    return {"order": order, "items": items}
 
 
-class UpdateStatusRequest(BaseModel):
-    status: str
-
-
-@app.patch("/api/orders/{order_id}/status")
+@app.patch("/api/orders/{order_id}/status", tags=["Orders"])
 def update_order_status(order_id: int, payload: UpdateStatusRequest) -> dict[str, Any]:
     if payload.status not in VALID_STATUSES:
         raise HTTPException(
@@ -173,21 +244,3 @@ def update_order_status(order_id: int, payload: UpdateStatusRequest) -> dict[str
     finally:
         conn.close()
     return {"order_id": order_id, "status": payload.status}
-
-
-@app.get("/api/orders/{order_id}")
-def get_order(order_id: int) -> dict[str, Any]:
-    conn = get_connection()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT * FROM orders WHERE id = %s", (order_id,))
-            order = cursor.fetchone()
-            if not order:
-                raise HTTPException(status_code=404, detail="Order not found")
-
-            cursor.execute("SELECT * FROM order_items WHERE order_id = %s ORDER BY id ASC", (order_id,))
-            items = cursor.fetchall()
-    finally:
-        conn.close()
-
-    return {"order": order, "items": items}
